@@ -30,3 +30,29 @@ def set_last_printer(printer_name: str) -> None:
     config = load_config()
     config["last_printer"] = printer_name
     save_config(config)
+
+
+def get_legal_entity() -> str | None:
+    value = load_config().get("legal_entity")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def set_legal_entity(legal_entity: str) -> None:
+    config = load_config()
+    config["legal_entity"] = legal_entity.strip()
+    save_config(config)
+
+
+def get_update_base() -> str | None:
+    value = load_config().get("update_base")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def set_update_base(update_base: str) -> None:
+    config = load_config()
+    config["update_base"] = update_base.strip()
+    save_config(config)

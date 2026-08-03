@@ -1,14 +1,82 @@
-"""GUI for printing round sauce labels."""
+"""GUI for printing round sauce and dessert labels."""
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 import config
 import label_renderer
 import printer_service
+import updater
+from desserts import DESSERTS, LEGAL_ENTITIES
 from sauces import SAUCES
+from version import APP_VERSION
+
+
+class LegalEntityDialog(tk.Toplevel):
+    """Modal: pick branch IP once; required before using the app."""
+
+    def __init__(self, master: tk.Tk, *, title: str = "ИП филиала") -> None:
+        super().__init__(master)
+        self.title(title)
+        self.resizable(False, False)
+        self.result: str | None = None
+
+        self.transient(master)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        frame = ttk.Frame(self, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text="Выберите ИП филиала — он будет печататься\nвнизу десертных наклеек:",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
+
+        self.entity_var = tk.StringVar()
+        combo = ttk.Combobox(
+            frame,
+            textvariable=self.entity_var,
+            values=LEGAL_ENTITIES,
+            state="readonly",
+            width=36,
+        )
+        combo.pack(fill=tk.X, pady=(12, 16))
+        if LEGAL_ENTITIES:
+            combo.current(0)
+        combo.focus_set()
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X)
+        ttk.Button(buttons, text="Отмена", command=self._on_cancel).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Сохранить", command=self._on_ok).pack(
+            side=tk.RIGHT, padx=(0, 8)
+        )
+
+        self.bind("<Return>", lambda _e: self._on_ok())
+        self.bind("<Escape>", lambda _e: self._on_cancel())
+
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.wait_window(self)
+
+    def _on_ok(self) -> None:
+        value = self.entity_var.get().strip()
+        if value not in LEGAL_ENTITIES:
+            messagebox.showwarning("ИП филиала", "Выберите ИП из списка", parent=self)
+            return
+        self.result = value
+        self.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.destroy()
 
 
 class SauceStickersApp(tk.Tk):
@@ -16,10 +84,14 @@ class SauceStickersApp(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("Печать наклеек — соусы")
-        self.minsize(520, 480)
+        self.title(f"Печать наклеек — соусы и десерты  v{APP_VERSION}")
+        self.minsize(560, 560)
+        self.legal_entity: str | None = None
+        self._update_busy = False
         self._build_ui()
         self._refresh_printers()
+        self.after(50, self._ensure_legal_entity)
+        self.after(800, lambda: self._check_updates(silent=True))
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self, padding=8)
@@ -35,25 +107,42 @@ class SauceStickersApp(tk.Tk):
         )
         self.printer_combo.pack(side=tk.LEFT, padx=(6, 6), fill=tk.X, expand=True)
         ttk.Button(top, text="Обновить", command=self._refresh_printers).pack(side=tk.LEFT)
-
-        canvas_frame = ttk.Frame(self, padding=(8, 0))
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
-
-        self.canvas = tk.Canvas(canvas_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.scroll_inner = ttk.Frame(self.canvas)
-
-        self.scroll_inner.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        ttk.Button(top, text="Настройки…", command=self._open_printer_settings).pack(
+            side=tk.LEFT, padx=(6, 0)
         )
-        self.canvas.create_window((0, 0), window=self.scroll_inner, anchor=tk.NW)
-        self.canvas.configure(yscrollcommand=scrollbar.set)
 
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        branch = ttk.Frame(self, padding=(8, 0, 8, 0))
+        branch.pack(fill=tk.X)
+        ttk.Label(branch, text="ИП филиала:").pack(side=tk.LEFT)
+        self.legal_var = tk.StringVar(value="не выбран")
+        ttk.Label(branch, textvariable=self.legal_var).pack(side=tk.LEFT, padx=(6, 8))
+        ttk.Button(branch, text="Сменить…", command=self._change_legal_entity).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(
+            branch,
+            text="Проверить обновления",
+            command=lambda: self._check_updates(silent=False),
+        ).pack(side=tk.RIGHT)
 
-        self._build_sauce_buttons()
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
+
+        sauces_tab = ttk.Frame(notebook)
+        desserts_tab = ttk.Frame(notebook)
+        notebook.add(sauces_tab, text="Соусы")
+        notebook.add(desserts_tab, text="Десерты")
+
+        self._build_button_grid(
+            sauces_tab,
+            items=SAUCES,
+            on_click=self._print_sauce,
+        )
+        self._build_button_grid(
+            desserts_tab,
+            items=DESSERTS,
+            on_click=self._print_dessert,
+        )
 
         bottom = ttk.Frame(self, padding=8)
         bottom.pack(fill=tk.X)
@@ -69,23 +158,69 @@ class SauceStickersApp(tk.Tk):
         )
         qty_spin.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.status_var = tk.StringVar(value="Выберите принтер и нажмите соус для печати")
+        self.status_var = tk.StringVar(value="Выберите принтер и нажмите позицию для печати")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT, padx=(16, 0))
 
-    def _build_sauce_buttons(self) -> None:
-        for idx, (sauce_id, sauce) in enumerate(SAUCES.items()):
+    def _build_button_grid(self, parent: ttk.Frame, items: dict, on_click) -> None:
+        canvas_frame = ttk.Frame(parent)
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind(
+            "<Configure>",
+            lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for idx, (item_id, item) in enumerate(items.items()):
             row = idx // self.COLUMNS
             col = idx % self.COLUMNS
             btn = ttk.Button(
-                self.scroll_inner,
-                text=sauce["button"],
-                command=lambda sid=sauce_id: self._print_sauce(sid),
-                width=22,
+                inner,
+                text=item["button"],
+                command=lambda iid=item_id, cb=on_click: cb(iid),
+                width=24,
             )
             btn.grid(row=row, column=col, padx=6, pady=6, sticky=tk.NSEW)
 
         for col in range(self.COLUMNS):
-            self.scroll_inner.columnconfigure(col, weight=1)
+            inner.columnconfigure(col, weight=1)
+
+    def _set_legal_entity(self, legal_entity: str) -> None:
+        self.legal_entity = legal_entity
+        self.legal_var.set(legal_entity)
+        config.set_legal_entity(legal_entity)
+
+    def _ensure_legal_entity(self) -> None:
+        saved = config.get_legal_entity()
+        if saved in LEGAL_ENTITIES:
+            self.legal_entity = saved
+            self.legal_var.set(saved)
+            return
+
+        dialog = LegalEntityDialog(self)
+        if dialog.result is None:
+            messagebox.showinfo(
+                "ИП филиала",
+                "Нужно выбрать ИП филиала, чтобы печатать десертные наклейки.",
+            )
+            self.destroy()
+            return
+
+        self._set_legal_entity(dialog.result)
+
+    def _change_legal_entity(self) -> None:
+        dialog = LegalEntityDialog(self, title="Сменить ИП филиала")
+        if dialog.result:
+            self._set_legal_entity(dialog.result)
+            self.status_var.set(f"ИП филиала: {dialog.result}")
 
     def _refresh_printers(self) -> None:
         try:
@@ -105,21 +240,167 @@ class SauceStickersApp(tk.Tk):
         else:
             self.printer_var.set(printers[0])
 
-    def _print_sauce(self, sauce_id: str) -> None:
+    def _open_printer_settings(self) -> None:
+        printer = self.printer_var.get().strip()
+        if not printer:
+            messagebox.showwarning("Принтер", "Сначала выберите принтер")
+            return
+        try:
+            hwnd = int(self.winfo_id())
+            printer_service.open_printer_preferences(printer, hwnd)
+            self.status_var.set(f"Настройки принтера: {printer}")
+        except Exception as exc:
+            messagebox.showerror("Настройки принтера", str(exc))
+
+    def _check_updates(self, *, silent: bool) -> None:
+        if self._update_busy:
+            return
+        if silent and not updater.get_update_base():
+            return
+
+        self._update_busy = True
+        if not silent:
+            self.status_var.set("Проверка обновлений…")
+
+        def worker() -> None:
+            try:
+                info = updater.fetch_update_info()
+                self.after(
+                    0,
+                    lambda: self._on_update_check_done(info, silent=silent, error=None),
+                )
+            except Exception as exc:
+                err = exc
+                self.after(
+                    0,
+                    lambda: self._on_update_check_done(None, silent=silent, error=err),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_check_done(
+        self, info, *, silent: bool, error: Exception | None
+    ) -> None:
+        self._update_busy = False
+        if error is not None:
+            if silent:
+                return
+            messagebox.showerror("Обновление", str(error))
+            self.status_var.set("Не удалось проверить обновления")
+            return
+
+        if info is None:
+            if not silent:
+                messagebox.showinfo(
+                    "Обновление",
+                    f"Установлена актуальная версия {APP_VERSION}.",
+                )
+                self.status_var.set(f"Версия актуальна: {APP_VERSION}")
+            return
+
+        notes = f"\n\n{info.notes}" if info.notes else ""
+        if not messagebox.askyesno(
+            "Обновление",
+            f"Доступна версия {info.version} (сейчас {APP_VERSION}).{notes}\n\n"
+            "Скачать и установить?",
+        ):
+            self.status_var.set(f"Доступна версия {info.version}")
+            return
+
+        self._install_update(info)
+
+    def _install_update(self, info: updater.UpdateInfo) -> None:
+        if not updater.is_frozen():
+            messagebox.showinfo(
+                "Обновление",
+                "Автоустановка работает только в собранном SauceStickers.exe.\n"
+                f"Новая версия: {info.version}\nИсточник: {info.source}",
+            )
+            return
+
+        progress = tk.Toplevel(self)
+        progress.title("Обновление")
+        progress.resizable(False, False)
+        progress.transient(self)
+        progress.grab_set()
+        ttk.Label(progress, text=f"Скачивание {info.version}…").pack(
+            padx=20, pady=(16, 8)
+        )
+        bar = ttk.Progressbar(progress, mode="determinate", length=280)
+        bar.pack(padx=20, pady=(0, 16))
+        progress.update_idletasks()
+
+        def on_progress(done: int, total: int) -> None:
+            def ui() -> None:
+                if total > 0:
+                    bar.configure(mode="determinate", maximum=total, value=done)
+                else:
+                    if str(bar.cget("mode")) != "indeterminate":
+                        bar.configure(mode="indeterminate")
+                        bar.start(10)
+
+            self.after(0, ui)
+
+        def worker() -> None:
+            try:
+                path = updater.download_update(info, progress=on_progress)
+                self.after(0, lambda: self._on_update_downloaded(path, progress))
+            except Exception as exc:
+                err = exc
+                self.after(0, lambda: self._on_update_failed(err, progress))
+
+        self._update_busy = True
+        self.status_var.set(f"Скачивание {info.version}…")
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_failed(self, exc: Exception, progress: tk.Toplevel) -> None:
+        self._update_busy = False
+        try:
+            progress.destroy()
+        except tk.TclError:
+            pass
+        messagebox.showerror("Обновление", f"Не удалось скачать обновление:\n{exc}")
+        self.status_var.set("Ошибка обновления")
+
+    def _on_update_downloaded(self, new_exe, progress: tk.Toplevel) -> None:
+        try:
+            progress.destroy()
+        except tk.TclError:
+            pass
+        try:
+            updater.apply_update_and_restart(new_exe)
+        except Exception as exc:
+            self._update_busy = False
+            messagebox.showerror("Обновление", str(exc))
+            self.status_var.set("Ошибка обновления")
+            return
+
+        self.status_var.set("Установка обновления…")
+        self.destroy()
+
+    def _get_print_request(self) -> tuple[str, int] | None:
         printer = self.printer_var.get().strip()
         if not printer:
             messagebox.showwarning("Принтер", "Выберите принтер")
-            return
+            return None
 
         try:
             qty = int(self.qty_var.get())
         except (tk.TclError, ValueError):
             messagebox.showwarning("Количество", "Введите корректное количество")
-            return
+            return None
 
         if qty < 1:
             messagebox.showwarning("Количество", "Количество должно быть не меньше 1")
+            return None
+
+        return printer, qty
+
+    def _print_sauce(self, sauce_id: str) -> None:
+        req = self._get_print_request()
+        if req is None:
             return
+        printer, qty = req
 
         sauce_name = SAUCES[sauce_id]["button"]
         self.status_var.set(f"Печать: {sauce_name} × {qty}…")
@@ -135,6 +416,36 @@ class SauceStickersApp(tk.Tk):
             return
 
         self.status_var.set(f"Напечатано: {sauce_name} × {qty}")
+
+    def _print_dessert(self, dessert_id: str) -> None:
+        if not self.legal_entity:
+            messagebox.showwarning("ИП филиала", "Сначала выберите ИП филиала")
+            self._ensure_legal_entity()
+            if not self.legal_entity:
+                return
+
+        req = self._get_print_request()
+        if req is None:
+            return
+        printer, qty = req
+
+        dessert_name = DESSERTS[dessert_id]["button"]
+        self.status_var.set(f"Печать: {dessert_name} × {qty}…")
+        self.update_idletasks()
+
+        try:
+            label = label_renderer.render_dessert_label(
+                dessert_id,
+                legal_entity=self.legal_entity,
+            )
+            printer_service.print_image(printer, label, copies=qty)
+            config.set_last_printer(printer)
+        except Exception as exc:
+            self.status_var.set("Ошибка печати")
+            messagebox.showerror("Ошибка печати", str(exc))
+            return
+
+        self.status_var.set(f"Напечатано: {dessert_name} × {qty}")
 
 
 def main() -> None:

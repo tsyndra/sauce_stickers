@@ -16,7 +16,7 @@ SAUCES = {
     "ketchup_heinz": {
         "button": "Кетчуп HEINZ",
         "label_title": "КЕТЧУП HEINZ",
-        "composition": "Вода, ааста томатная, сахар, уксус, соль, специи",
+        "composition": "Вода, паста томатная, сахар, уксус, соль, специи",
         "weight_g": 30,
     },
     "bbq": {
