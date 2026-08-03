@@ -14,8 +14,9 @@ echo Готово:
 echo   dist\SauceStickers.exe
 echo   dist\version.json
 echo.
-echo Скопируйте оба файла в папку обновлений (сетевая шара / HTTP).
-echo Источник задаётся в version.py → DEFAULT_UPDATE_BASE
-echo или update_base.txt рядом с exe на филиале.
+echo Выложите оба файла в GitHub Release (latest):
+echo   https://github.com/tsyndra/sauce_stickers/releases
+echo Пример:
+echo   gh release create vX.Y.Z dist\SauceStickers.exe dist\version.json --title "vX.Y.Z"
 echo.
 pause

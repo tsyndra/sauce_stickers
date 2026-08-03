@@ -20,21 +20,36 @@ build.bat
 
 Перед релизом поднимите номер в `version.py` → `APP_VERSION`.
 
-## Автообновление
+## Автообновление (из GitHub Releases)
 
-1. Создайте папку на сетевой шаре, например `\\fileserver\Share\SauceStickers`.
-2. После `build.bat` скопируйте туда:
-   - `SauceStickers.exe`
-   - `version.json`
-3. Укажите эту папку одним из способов:
-   - в `version.py`: `DEFAULT_UPDATE_BASE = r"\\fileserver\Share\SauceStickers"` и пересоберите;
-   - или файл `update_base.txt` рядом с exe на филиале (одна строка — путь/URL);
-   - или в `%APPDATA%\SauceStickers\config.json` поле `"update_base"`.
+Источник по умолчанию:
 
-При запуске приложение само проверяет `version.json`. Кнопка **Проверить обновления** — вручную.  
-Если версия новее — скачает exe, заменит файл и перезапустится.
+`https://github.com/tsyndra/sauce_stickers/releases/latest/download`
 
-Также поддерживается HTTP(S)-каталог с теми же файлами.
+Туда кладутся ассеты релиза:
+
+- `version.json`
+- `SauceStickers.exe`
+
+**Как выкатить обновление:**
+
+1. Поднимите `APP_VERSION` в `version.py`.
+2. Запустите `build.bat`.
+3. Создайте GitHub Release с тегом = версии (например `v1.2.0`) и прикрепите оба файла из `dist\`.
+
+Через `gh` (если установлен):
+
+```bat
+gh release create v1.2.0 dist\SauceStickers.exe dist\version.json --title "v1.2.0" --notes "Описание"
+```
+
+При запуске приложение читает `version.json` с latest release и при новой версии скачивает `SauceStickers.exe`.  
+Кнопка **Проверить обновления** — вручную.
+
+Репозиторий должен быть **публичным** (или позже добавим токен для private).  
+Первый exe с автообновлением на филиал всё равно ставят вручную один раз.
+
+Альтернатива: сетевая шара / свой URL — `update_base.txt` рядом с exe или `"update_base"` в `%APPDATA%\SauceStickers\config.json`.
 
 ## Настройка принтера
 
