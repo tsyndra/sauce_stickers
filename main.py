@@ -125,6 +125,43 @@ class SauceStickersApp(tk.Tk):
             command=lambda: self._check_updates(silent=False),
         ).pack(side=tk.RIGHT)
 
+        offset_row = ttk.Frame(self, padding=(8, 6, 8, 0))
+        offset_row.pack(fill=tk.X)
+        ttk.Label(offset_row, text="Сдвиг мм:").pack(side=tk.LEFT)
+        ttk.Label(offset_row, text="X").pack(side=tk.LEFT, padx=(8, 2))
+        ox, oy = config.get_print_offset_mm()
+        self.offset_x_var = tk.DoubleVar(value=ox)
+        self.offset_y_var = tk.DoubleVar(value=oy)
+        ttk.Spinbox(
+            offset_row,
+            from_=-10.0,
+            to=10.0,
+            increment=0.5,
+            textvariable=self.offset_x_var,
+            width=6,
+            command=self._save_print_offset,
+        ).pack(side=tk.LEFT)
+        ttk.Label(offset_row, text="Y").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Spinbox(
+            offset_row,
+            from_=-10.0,
+            to=10.0,
+            increment=0.5,
+            textvariable=self.offset_y_var,
+            width=6,
+            command=self._save_print_offset,
+        ).pack(side=tk.LEFT)
+        ttk.Label(offset_row, text="(+X вправо, +Y вниз)").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        ttk.Button(
+            offset_row,
+            text="Проверить принтер",
+            command=self._check_printer_setup,
+        ).pack(side=tk.RIGHT)
+        self.offset_x_var.trace_add("write", lambda *_: self._save_print_offset())
+        self.offset_y_var.trace_add("write", lambda *_: self._save_print_offset())
+
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
 
@@ -251,6 +288,44 @@ class SauceStickersApp(tk.Tk):
             self.status_var.set(f"Настройки принтера: {printer}")
         except Exception as exc:
             messagebox.showerror("Настройки принтера", str(exc))
+
+    def _save_print_offset(self) -> None:
+        try:
+            x = float(self.offset_x_var.get())
+            y = float(self.offset_y_var.get())
+        except (tk.TclError, ValueError, TypeError):
+            return
+        config.set_print_offset_mm(x, y)
+
+    def _print_offsets(self) -> tuple[float, float]:
+        try:
+            return float(self.offset_x_var.get()), float(self.offset_y_var.get())
+        except (tk.TclError, ValueError, TypeError):
+            return config.get_print_offset_mm()
+
+    def _check_printer_setup(self, *, silent_ok: bool = False) -> bool:
+        printer = self.printer_var.get().strip()
+        if not printer:
+            messagebox.showwarning("Принтер", "Сначала выберите принтер")
+            return False
+        try:
+            info = printer_service.inspect_printer(printer)
+        except Exception as exc:
+            messagebox.showerror("Принтер", str(exc))
+            return False
+
+        self.status_var.set(info["summary"])
+        if info["ok"]:
+            if not silent_ok:
+                messagebox.showinfo("Принтер", info["summary"])
+            return True
+
+        return messagebox.askyesno(
+            "Принтер",
+            f"{info['summary']}\n\n"
+            "Откройте «Настройки…» и выберите носитель 40×40 мм.\n"
+            "Печатать всё равно?",
+        )
 
     def _check_updates(self, *, silent: bool) -> None:
         if self._update_busy:
@@ -384,6 +459,9 @@ class SauceStickersApp(tk.Tk):
             messagebox.showwarning("Принтер", "Выберите принтер")
             return None
 
+        if not self._check_printer_setup(silent_ok=True):
+            return None
+
         try:
             qty = int(self.qty_var.get())
         except (tk.TclError, ValueError):
@@ -408,7 +486,10 @@ class SauceStickersApp(tk.Tk):
 
         try:
             label = label_renderer.render_label(sauce_id)
-            printer_service.print_image(printer, label, copies=qty)
+            ox, oy = self._print_offsets()
+            printer_service.print_image(
+                printer, label, copies=qty, offset_x_mm=ox, offset_y_mm=oy
+            )
             config.set_last_printer(printer)
         except Exception as exc:
             self.status_var.set("Ошибка печати")
@@ -438,7 +519,10 @@ class SauceStickersApp(tk.Tk):
                 dessert_id,
                 legal_entity=self.legal_entity,
             )
-            printer_service.print_image(printer, label, copies=qty)
+            ox, oy = self._print_offsets()
+            printer_service.print_image(
+                printer, label, copies=qty, offset_x_mm=ox, offset_y_mm=oy
+            )
             config.set_last_printer(printer)
         except Exception as exc:
             self.status_var.set("Ошибка печати")

@@ -144,20 +144,71 @@ def _devmode_for_label(printer_name: str):
 
 def _create_printer_dc(printer_name: str):
     """Create a printer DC, preferably with 40×40 mm DEVMODE."""
-    hdc = win32ui.CreateDC()
     devmode = _devmode_for_label(printer_name)
     if devmode is not None:
         try:
-            hdc.CreateDC("WINSPOOL", printer_name, None, devmode)
-            return hdc
-        except win32ui.error:
-            hdc.DeleteDC()
-            hdc = win32ui.CreateDC()
+            handle = win32gui.CreateDC("WINSPOOL", printer_name, None, devmode)
+            return win32ui.CreateDCFromHandle(handle)
+        except Exception:
+            pass
+
+    hdc = win32ui.CreateDC()
     hdc.CreatePrinterDC(printer_name)
     return hdc
 
 
-def print_image(printer_name: str, image: Image.Image, copies: int = 1) -> None:
+def inspect_printer(printer_name: str) -> dict:
+    """Read effective paper size / DPI after applying our 40×40 DEVMODE."""
+    if not printer_name.strip():
+        raise ValueError("Принтер не выбран")
+
+    hdc = _create_printer_dc(printer_name)
+    try:
+        printable_w = hdc.GetDeviceCaps(win32con.HORZRES)
+        printable_h = hdc.GetDeviceCaps(win32con.VERTRES)
+        dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX) or 203
+        dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY) or 203
+        # Physical size in millimeters (HORZSIZE / VERTSIZE).
+        size_w_mm = float(hdc.GetDeviceCaps(win32con.HORZSIZE) or 0)
+        size_h_mm = float(hdc.GetDeviceCaps(win32con.VERTSIZE) or 0)
+        if size_w_mm <= 0:
+            size_w_mm = printable_w * 25.4 / dpi_x
+        if size_h_mm <= 0:
+            size_h_mm = printable_h * 25.4 / dpi_y
+    finally:
+        hdc.DeleteDC()
+
+    tol_mm = 2.0
+    ok_size = (
+        abs(size_w_mm - LABEL_MM) <= tol_mm and abs(size_h_mm - LABEL_MM) <= tol_mm
+    )
+    messages: list[str] = []
+    if ok_size:
+        messages.append(f"Носитель ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм — ок")
+    else:
+        messages.append(
+            f"Носитель сейчас ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм, нужно {LABEL_MM}x{LABEL_MM} мм"
+        )
+    messages.append(f"DPI {dpi_x}x{dpi_y}")
+
+    return {
+        "ok": ok_size,
+        "paper_mm": (round(size_w_mm, 1), round(size_h_mm, 1)),
+        "dpi": (dpi_x, dpi_y),
+        "printable_px": (printable_w, printable_h),
+        "messages": messages,
+        "summary": "; ".join(messages),
+    }
+
+
+def print_image(
+    printer_name: str,
+    image: Image.Image,
+    copies: int = 1,
+    *,
+    offset_x_mm: float = 0.0,
+    offset_y_mm: float = 0.0,
+) -> None:
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
 
@@ -190,8 +241,9 @@ def print_image(printer_name: str, image: Image.Image, copies: int = 1) -> None:
             draw_w = max(1, int(draw_w * scale))
             draw_h = max(1, int(draw_h * scale))
 
-        offset_x = (printable_w - draw_w) // 2
-        offset_y = (printable_h - draw_h) // 2
+        # +X right, +Y down — user mm offsets on top of centered placement.
+        offset_x = (printable_w - draw_w) // 2 + round(offset_x_mm / 25.4 * dpi_x)
+        offset_y = (printable_h - draw_h) // 2 + round(offset_y_mm / 25.4 * dpi_y)
 
         hdc.StartDoc("SauceStickers")
         try:

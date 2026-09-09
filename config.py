@@ -56,3 +56,26 @@ def set_update_base(update_base: str) -> None:
     config = load_config()
     config["update_base"] = update_base.strip()
     save_config(config)
+
+
+def get_print_offset_mm() -> tuple[float, float]:
+    data = load_config()
+    # Photo: content shifted left + up → +X right, +Y down.
+    if "print_offset_x_mm" not in data and "print_offset_y_mm" not in data:
+        return 2.0, 2.5
+    try:
+        x = float(data.get("print_offset_x_mm", 0) or 0)
+    except (TypeError, ValueError):
+        x = 0.0
+    try:
+        y = float(data.get("print_offset_y_mm", 0) or 0)
+    except (TypeError, ValueError):
+        y = 0.0
+    return x, y
+
+
+def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
+    config = load_config()
+    config["print_offset_x_mm"] = round(float(x_mm), 2)
+    config["print_offset_y_mm"] = round(float(y_mm), 2)
+    save_config(config)
