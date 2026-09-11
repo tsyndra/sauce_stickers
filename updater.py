@@ -184,36 +184,53 @@ def download_update(info: UpdateInfo, *, progress=None) -> Path:
 
 
 def apply_update_and_restart(new_exe: Path) -> None:
-    """Replace running frozen exe via a helper bat, then exit."""
+    """Replace running frozen exe via a hidden PowerShell helper, then exit."""
     if not is_frozen():
         raise RuntimeError("Автозамена exe работает только в собранном приложении")
 
     current = current_exe_path()
     pid = os.getpid()
-    bat = Path(tempfile.gettempdir()) / f"SauceStickers_update_{pid}.bat"
-    new_exe_s = str(new_exe)
-    current_s = str(current)
+    ps1 = Path(tempfile.gettempdir()) / f"SauceStickers_update_{pid}.ps1"
 
-    # Wait until this process exits, then replace and relaunch.
-    script = f"""@echo off
-setlocal
-:wait
-timeout /t 1 /nobreak >nul
-tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 goto wait
-copy /Y "{new_exe_s}" "{current_s}" >nul
-if errorlevel 1 (
-  ping -n 2 127.0.0.1 >nul
-  copy /Y "{new_exe_s}" "{current_s}" >nul
-)
-start "" "{current_s}"
-del "{new_exe_s}" >nul 2>&1
-del "%~f0" >nul 2>&1
+    def _q(path: Path | str) -> str:
+        return "'" + str(path).replace("'", "''") + "'"
+
+    # No cmd/find windows — wait for PID, copy, relaunch.
+    script = f"""$ErrorActionPreference = 'Continue'
+$pidToWait = {pid}
+$src = {_q(new_exe)}
+$dst = {_q(current)}
+for ($i = 0; $i -lt 120; $i++) {{
+  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) {{ break }}
+  Start-Sleep -Milliseconds 500
+}}
+Start-Sleep -Milliseconds 800
+Copy-Item -LiteralPath $src -Destination $dst -Force
+if (-not $?) {{
+  Start-Sleep -Seconds 1
+  Copy-Item -LiteralPath $src -Destination $dst -Force
+}}
+Remove-Item -LiteralPath $src -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $dst
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 """
-    bat.write_text(script, encoding="utf-8")
+    ps1.write_text(script, encoding="utf-8")
+
+    creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
     subprocess.Popen(
-        ["cmd.exe", "/c", str(bat)],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(ps1),
+        ],
         close_fds=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        | getattr(subprocess, "DETACHED_PROCESS", 0x00000008),
+        creationflags=creationflags,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )

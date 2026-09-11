@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -478,6 +479,7 @@ class SauceStickersApp(tk.Tk):
 
         self.status_var.set("Установка обновления…")
         self.destroy()
+        sys.exit(0)
 
     def _get_print_request(self) -> tuple[str, int] | None:
         printer = self.printer_var.get().strip()
