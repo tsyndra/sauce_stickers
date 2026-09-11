@@ -16,6 +16,8 @@ DEFAULT_LABEL_GAP_MM = 3.0
 # EnumForms sizes are in thousandths of a millimeter.
 _FORM_TOLERANCE = 1200  # ~1.2 mm
 _FORM_NAME_PREFIX = "SauceStickers"
+# XP-365B: 203 dpi ≈ 8 dots/mm (TSPL coordinates are in dots).
+TSPL_DOTS_PER_MM = 8
 
 
 def list_printers() -> list[str]:
@@ -249,6 +251,71 @@ def inspect_printer(
     }
 
 
+def _label_to_tspl_bitmap(
+    image: Image.Image,
+    *,
+    offset_x_mm: float,
+    offset_y_mm: float,
+) -> tuple[int, int, bytes]:
+    """Return (width_bytes, height, data) for TSPL BITMAP, label sized, 1 = white."""
+    side = LABEL_MM * TSPL_DOTS_PER_MM  # 320 dots at 203 dpi
+    src = image.convert("L").resize((side, side), Image.Resampling.LANCZOS)
+    canvas = Image.new("L", (side, side), 255)
+    dx = round(offset_x_mm * TSPL_DOTS_PER_MM)
+    dy = round(offset_y_mm * TSPL_DOTS_PER_MM)
+    canvas.paste(src, (dx, dy))
+    mono = canvas.point(lambda p: 255 if p > 128 else 0).convert("1")
+    width_bytes = (side + 7) // 8
+    return width_bytes, side, mono.tobytes()
+
+
+def print_image_tspl(
+    printer_name: str,
+    image: Image.Image,
+    copies: int = 1,
+    *,
+    offset_x_mm: float = 0.0,
+    offset_y_mm: float = 0.0,
+    gap_mm: float = DEFAULT_LABEL_GAP_MM,
+    direction: int = 1,
+) -> None:
+    """Send raw TSPL (XP-365B native) so the printer syncs on the die-cut gap itself."""
+    if copies < 1:
+        raise ValueError("Количество копий должно быть не меньше 1")
+    if not printer_name.strip():
+        raise ValueError("Принтер не выбран")
+
+    gap_mm = max(0.0, float(gap_mm))
+    width_bytes, height, data = _label_to_tspl_bitmap(
+        image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
+    )
+
+    head = (
+        f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
+        f"GAP {gap_mm:g} mm,0 mm\r\n"
+        f"DIRECTION {1 if direction else 0}\r\n"
+        "REFERENCE 0,0\r\n"
+        "OFFSET 0 mm\r\n"
+        "SET TEAR ON\r\n"
+        "CLS\r\n"
+        f"BITMAP 0,0,{width_bytes},{height},0,"
+    ).encode("ascii")
+    tail = f"\r\nPRINT 1,{int(copies)}\r\n".encode("ascii")
+    payload = head + data + tail
+
+    hprinter = win32print.OpenPrinter(printer_name)
+    try:
+        win32print.StartDocPrinter(hprinter, 1, ("SauceStickers", None, "RAW"))
+        try:
+            win32print.StartPagePrinter(hprinter)
+            win32print.WritePrinter(hprinter, payload)
+            win32print.EndPagePrinter(hprinter)
+        finally:
+            win32print.EndDocPrinter(hprinter)
+    finally:
+        win32print.ClosePrinter(hprinter)
+
+
 def print_image(
     printer_name: str,
     image: Image.Image,
@@ -258,6 +325,7 @@ def print_image(
     offset_y_mm: float = 0.0,
     gap_mm: float = DEFAULT_LABEL_GAP_MM,
 ) -> None:
+    """Print via Windows GDI driver (fallback when TSPL mode is off)."""
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
 

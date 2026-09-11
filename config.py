@@ -92,6 +92,26 @@ def get_label_gap_mm() -> float:
         return default
 
 
+def get_tspl_mode() -> bool:
+    """Direct TSPL printing (XP-365B native) instead of the Windows GDI driver."""
+    value = load_config().get("tspl_mode", True)
+    return bool(value)
+
+
+def set_tspl_mode(enabled: bool) -> None:
+    config = load_config()
+    config["tspl_mode"] = bool(enabled)
+    save_config(config)
+
+
+def get_tspl_direction() -> int:
+    """TSPL DIRECTION (0/1) — flip if labels come out upside down."""
+    try:
+        return 1 if int(load_config().get("tspl_direction", 1)) else 0
+    except (TypeError, ValueError):
+        return 1
+
+
 def set_label_gap_mm(gap_mm: float) -> None:
     config = load_config()
     config["label_gap_mm"] = round(max(0.0, float(gap_mm)), 2)

@@ -164,6 +164,13 @@ class SauceStickersApp(tk.Tk):
             command=self._save_label_gap,
         ).pack(side=tk.LEFT)
         ttk.Label(offset_row, text="мм").pack(side=tk.LEFT, padx=(2, 0))
+        self.tspl_var = tk.BooleanVar(value=config.get_tspl_mode())
+        ttk.Checkbutton(
+            offset_row,
+            text="Прямая печать TSPL",
+            variable=self.tspl_var,
+            command=lambda: config.set_tspl_mode(bool(self.tspl_var.get())),
+        ).pack(side=tk.LEFT, padx=(12, 0))
         ttk.Button(
             offset_row,
             text="Проверить принтер",
@@ -327,11 +334,42 @@ class SauceStickersApp(tk.Tk):
         except (tk.TclError, ValueError, TypeError):
             return config.get_label_gap_mm()
 
+    def _print_label(self, printer: str, label, qty: int) -> None:
+        ox, oy = self._print_offsets()
+        if bool(self.tspl_var.get()):
+            printer_service.print_image_tspl(
+                printer,
+                label,
+                copies=qty,
+                offset_x_mm=ox,
+                offset_y_mm=oy,
+                gap_mm=self._label_gap(),
+                direction=config.get_tspl_direction(),
+            )
+        else:
+            printer_service.print_image(
+                printer,
+                label,
+                copies=qty,
+                offset_x_mm=ox,
+                offset_y_mm=oy,
+                gap_mm=self._label_gap(),
+            )
+
     def _check_printer_setup(self, *, silent_ok: bool = False) -> bool:
         printer = self.printer_var.get().strip()
         if not printer:
             messagebox.showwarning("Принтер", "Сначала выберите принтер")
             return False
+        if bool(self.tspl_var.get()):
+            summary = (
+                f"Прямая печать TSPL: SIZE 40×40 мм, GAP {self._label_gap():g} мм — "
+                "шаг ловит сам принтер по датчику зазора"
+            )
+            self.status_var.set(summary)
+            if not silent_ok:
+                messagebox.showinfo("Принтер", summary)
+            return True
         try:
             info = printer_service.inspect_printer(
                 printer, gap_mm=self._label_gap()
@@ -514,15 +552,7 @@ class SauceStickersApp(tk.Tk):
 
         try:
             label = label_renderer.render_label(sauce_id)
-            ox, oy = self._print_offsets()
-            printer_service.print_image(
-                printer,
-                label,
-                copies=qty,
-                offset_x_mm=ox,
-                offset_y_mm=oy,
-                gap_mm=self._label_gap(),
-            )
+            self._print_label(printer, label, qty)
             config.set_last_printer(printer)
         except Exception as exc:
             self.status_var.set("Ошибка печати")
@@ -552,15 +582,7 @@ class SauceStickersApp(tk.Tk):
                 dessert_id,
                 legal_entity=self.legal_entity,
             )
-            ox, oy = self._print_offsets()
-            printer_service.print_image(
-                printer,
-                label,
-                copies=qty,
-                offset_x_mm=ox,
-                offset_y_mm=oy,
-                gap_mm=self._label_gap(),
-            )
+            self._print_label(printer, label, qty)
             config.set_last_printer(printer)
         except Exception as exc:
             self.status_var.set("Ошибка печати")
