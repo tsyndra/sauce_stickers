@@ -176,6 +176,11 @@ class SauceStickersApp(tk.Tk):
             text="Проверить принтер",
             command=self._check_printer_setup,
         ).pack(side=tk.RIGHT)
+        ttk.Button(
+            offset_row,
+            text="Калибровка зазора",
+            command=self._calibrate_gap,
+        ).pack(side=tk.RIGHT, padx=(0, 6))
         self.offset_x_var.trace_add("write", lambda *_: self._save_print_offset())
         self.offset_y_var.trace_add("write", lambda *_: self._save_print_offset())
         self.gap_var.trace_add("write", lambda *_: self._save_label_gap())
@@ -355,6 +360,24 @@ class SauceStickersApp(tk.Tk):
                 offset_y_mm=oy,
                 gap_mm=self._label_gap(),
             )
+
+    def _calibrate_gap(self) -> None:
+        printer = self.printer_var.get().strip()
+        if not printer:
+            messagebox.showwarning("Принтер", "Сначала выберите принтер")
+            return
+        if not messagebox.askyesno(
+            "Калибровка зазора",
+            "Принтер промотает 2–3 пустые наклейки и запомнит зазор ленты.\n"
+            "После этого текст перестанет сползать. Продолжить?",
+        ):
+            return
+        try:
+            printer_service.calibrate_gap_tspl(printer, gap_mm=self._label_gap())
+        except Exception as exc:
+            messagebox.showerror("Калибровка зазора", str(exc))
+            return
+        self.status_var.set("Калибровка отправлена — дождитесь, пока принтер остановится")
 
     def _check_printer_setup(self, *, silent_ok: bool = False) -> bool:
         printer = self.printer_var.get().strip()

@@ -301,11 +301,13 @@ def print_image_tspl(
         f"BITMAP 0,0,{width_bytes},{height},0,"
     ).encode("ascii")
     tail = f"\r\nPRINT 1,{int(copies)}\r\n".encode("ascii")
-    payload = head + data + tail
+    _send_raw(printer_name, head + data + tail)
 
+
+def _send_raw(printer_name: str, payload: bytes, doc_name: str = "SauceStickers") -> None:
     hprinter = win32print.OpenPrinter(printer_name)
     try:
-        win32print.StartDocPrinter(hprinter, 1, ("SauceStickers", None, "RAW"))
+        win32print.StartDocPrinter(hprinter, 1, (doc_name, None, "RAW"))
         try:
             win32print.StartPagePrinter(hprinter)
             win32print.WritePrinter(hprinter, payload)
@@ -314,6 +316,19 @@ def print_image_tspl(
             win32print.EndDocPrinter(hprinter)
     finally:
         win32print.ClosePrinter(hprinter)
+
+
+def calibrate_gap_tspl(printer_name: str, *, gap_mm: float = DEFAULT_LABEL_GAP_MM) -> None:
+    """Ask the printer to measure the roll (feeds 2–3 labels) so it syncs on the gap."""
+    if not printer_name.strip():
+        raise ValueError("Принтер не выбран")
+    gap_mm = max(0.0, float(gap_mm))
+    payload = (
+        f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
+        f"GAP {gap_mm:g} mm,0 mm\r\n"
+        "GAPDETECT\r\n"
+    ).encode("ascii")
+    _send_raw(printer_name, payload, "SauceStickers calibrate")
 
 
 def print_image(
