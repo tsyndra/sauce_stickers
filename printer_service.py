@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pywintypes
 import win32con
 import win32gui
 import win32print
@@ -10,11 +11,10 @@ from PIL import Image, ImageWin
 
 # Must match label_renderer.LABEL_MM / intended physical size.
 LABEL_MM = 40
-# DEVMODE paper size is in tenths of a millimeter.
-_PAPER_TENTHS_MM = LABEL_MM * 10
+# Physical pitch = label + gap between die-cuts (stops cumulative drift).
+DEFAULT_LABEL_GAP_MM = 3.0
 # EnumForms sizes are in thousandths of a millimeter.
-_FORM_THOUSANDTHS_MM = LABEL_MM * 1000
-_FORM_TOLERANCE = 800  # ~0.8 mm
+_FORM_TOLERANCE = 1200  # ~1.2 mm
 
 
 def list_printers() -> list[str]:
@@ -50,50 +50,55 @@ def open_printer_preferences(printer_name: str, hwnd: int = 0) -> None:
         properties["pDevMode"] = devmode
         try:
             win32print.SetPrinter(hprinter, 2, properties, 0)
-        except win32print.error:
+        except pywintypes.error:
             # Shared/network printers may deny saving defaults; dialog still applied for session.
             pass
     finally:
         win32print.ClosePrinter(hprinter)
 
 
-def _find_label_form_name(hprinter) -> str | None:
+def _find_label_form_name(hprinter, pitch_mm: float) -> str | None:
     try:
         forms = win32print.EnumForms(hprinter)
-    except win32print.error:
+    except pywintypes.error:
         return None
 
-    target = _FORM_THOUSANDTHS_MM
+    target_w = LABEL_MM * 1000
+    target_h = pitch_mm * 1000
+    best_name = None
+    best_score = None
     for form in forms:
         size = form.get("Size") or {}
         width = size.get("cx", 0)
         height = size.get("cy", 0)
-        if (
-            abs(width - target) <= _FORM_TOLERANCE
-            and abs(height - target) <= _FORM_TOLERANCE
-        ):
+        if abs(width - target_w) > _FORM_TOLERANCE:
+            continue
+        score = abs(height - target_h)
+        if score <= _FORM_TOLERANCE and (best_score is None or score < best_score):
             name = form.get("Name")
             if name:
-                return name
-    return None
+                best_name = name
+                best_score = score
+    return best_name
 
 
-def _apply_label_paper(devmode, form_name: str | None) -> None:
-    """Force 40×40 mm paper on a DEVMODE (per print job)."""
+def _apply_label_paper(devmode, form_name: str | None, gap_mm: float) -> None:
+    """Force label width×pitch (label + gap) on a DEVMODE."""
+    pitch_mm = LABEL_MM + max(0.0, gap_mm)
+    paper_w = LABEL_MM * 10
+    paper_h = max(1, round(pitch_mm * 10))
+
     if form_name:
-        # Prefer an existing driver form when the printer already has 40×40.
         try:
             devmode.FormName = form_name
             devmode.Fields |= win32con.DM_FORMNAME
         except (AttributeError, TypeError):
             pass
 
-    # Always also set custom size — many thermal drivers honor Width/Length.
     try:
-        # 0 = custom; DMPAPER_USER (256) also accepted by some drivers.
         devmode.PaperSize = getattr(win32con, "DMPAPER_USER", 256)
-        devmode.PaperWidth = _PAPER_TENTHS_MM
-        devmode.PaperLength = _PAPER_TENTHS_MM
+        devmode.PaperWidth = paper_w
+        devmode.PaperLength = paper_h
         devmode.Fields |= (
             win32con.DM_PAPERSIZE | win32con.DM_PAPERWIDTH | win32con.DM_PAPERLENGTH
         )
@@ -108,8 +113,8 @@ def _apply_label_paper(devmode, form_name: str | None) -> None:
         pass
 
 
-def _devmode_for_label(printer_name: str):
-    """Build a printer DEVMODE with 40×40 mm for this job only."""
+def _devmode_for_label(printer_name: str, gap_mm: float = DEFAULT_LABEL_GAP_MM):
+    """Build a printer DEVMODE with label + gap pitch for this job."""
     hprinter = win32print.OpenPrinter(printer_name)
     try:
         properties = win32print.GetPrinter(hprinter, 2)
@@ -117,10 +122,10 @@ def _devmode_for_label(printer_name: str):
         if devmode is None:
             return None
 
-        form_name = _find_label_form_name(hprinter)
-        _apply_label_paper(devmode, form_name)
+        pitch_mm = LABEL_MM + max(0.0, gap_mm)
+        form_name = _find_label_form_name(hprinter, pitch_mm)
+        _apply_label_paper(devmode, form_name, gap_mm)
 
-        # Let the driver merge private DEVMODE data after our changes.
         try:
             win32print.DocumentProperties(
                 0,
@@ -130,21 +135,20 @@ def _devmode_for_label(printer_name: str):
                 devmode,
                 win32con.DM_IN_BUFFER | win32con.DM_OUT_BUFFER,
             )
-        except win32print.error:
+        except pywintypes.error:
             pass
 
-        # Some drivers reset PaperSize on merge — force 40×40 again for CreateDC.
-        _apply_label_paper(devmode, form_name)
+        _apply_label_paper(devmode, form_name, gap_mm)
         return devmode
-    except win32print.error:
+    except pywintypes.error:
         return None
     finally:
         win32print.ClosePrinter(hprinter)
 
 
-def _create_printer_dc(printer_name: str):
-    """Create a printer DC, preferably with 40×40 mm DEVMODE."""
-    devmode = _devmode_for_label(printer_name)
+def _create_printer_dc(printer_name: str, gap_mm: float = DEFAULT_LABEL_GAP_MM):
+    """Create a printer DC with label+gap DEVMODE when possible."""
+    devmode = _devmode_for_label(printer_name, gap_mm=gap_mm)
     if devmode is not None:
         try:
             handle = win32gui.CreateDC("WINSPOOL", printer_name, None, devmode)
@@ -157,18 +161,20 @@ def _create_printer_dc(printer_name: str):
     return hdc
 
 
-def inspect_printer(printer_name: str) -> dict:
-    """Read effective paper size / DPI after applying our 40×40 DEVMODE."""
+def inspect_printer(
+    printer_name: str, *, gap_mm: float = DEFAULT_LABEL_GAP_MM
+) -> dict:
+    """Read effective paper size / DPI after applying label+gap DEVMODE."""
     if not printer_name.strip():
         raise ValueError("Принтер не выбран")
 
-    hdc = _create_printer_dc(printer_name)
+    pitch_mm = LABEL_MM + max(0.0, gap_mm)
+    hdc = _create_printer_dc(printer_name, gap_mm=gap_mm)
     try:
         printable_w = hdc.GetDeviceCaps(win32con.HORZRES)
         printable_h = hdc.GetDeviceCaps(win32con.VERTRES)
         dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX) or 203
         dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY) or 203
-        # Physical size in millimeters (HORZSIZE / VERTSIZE).
         size_w_mm = float(hdc.GetDeviceCaps(win32con.HORZSIZE) or 0)
         size_h_mm = float(hdc.GetDeviceCaps(win32con.VERTSIZE) or 0)
         if size_w_mm <= 0:
@@ -178,22 +184,27 @@ def inspect_printer(printer_name: str) -> dict:
     finally:
         hdc.DeleteDC()
 
-    tol_mm = 2.0
+    tol_mm = 2.5
     ok_size = (
-        abs(size_w_mm - LABEL_MM) <= tol_mm and abs(size_h_mm - LABEL_MM) <= tol_mm
+        abs(size_w_mm - LABEL_MM) <= tol_mm
+        and abs(size_h_mm - pitch_mm) <= tol_mm
     )
     messages: list[str] = []
     if ok_size:
-        messages.append(f"Носитель ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм — ок")
+        messages.append(
+            f"Шаг ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм (наклейка {LABEL_MM}+зазор) — ок"
+        )
     else:
         messages.append(
-            f"Носитель сейчас ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм, нужно {LABEL_MM}x{LABEL_MM} мм"
+            f"Шаг сейчас ~ {size_w_mm:.0f}x{size_h_mm:.0f} мм, "
+            f"ожидаем {LABEL_MM}x{pitch_mm:.0f} мм (наклейка+зазор)"
         )
     messages.append(f"DPI {dpi_x}x{dpi_y}")
 
     return {
         "ok": ok_size,
         "paper_mm": (round(size_w_mm, 1), round(size_h_mm, 1)),
+        "pitch_mm": round(pitch_mm, 1),
         "dpi": (dpi_x, dpi_y),
         "printable_px": (printable_w, printable_h),
         "messages": messages,
@@ -208,11 +219,13 @@ def print_image(
     *,
     offset_x_mm: float = 0.0,
     offset_y_mm: float = 0.0,
+    gap_mm: float = DEFAULT_LABEL_GAP_MM,
 ) -> None:
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
 
-    hdc = _create_printer_dc(printer_name)
+    gap_mm = max(0.0, float(gap_mm))
+    hdc = _create_printer_dc(printer_name, gap_mm=gap_mm)
 
     try:
         printable_w = hdc.GetDeviceCaps(win32con.HORZRES)
@@ -223,27 +236,20 @@ def print_image(
         if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # Soft image as-is. Driver smoothing must stay «Нет».
-        # Do NOT hard-threshold here — that made arcs jagged/worse than the good print.
         win32gui.SetStretchBltMode(hdc.GetHandleOutput(), win32con.COLORONCOLOR)
 
-        img_w, img_h = image.size
-        target_w = max(1, round(LABEL_MM / 25.4 * dpi_x))
-        target_h = max(1, round(LABEL_MM / 25.4 * dpi_y))
-
-        if abs(img_w - target_w) <= 2 and abs(img_h - target_h) <= 2:
-            draw_w, draw_h = img_w, img_h
-        else:
-            draw_w, draw_h = target_w, target_h
+        # Draw only the 40x40 label area; blank remainder is the inter-label gap.
+        draw_w = max(1, round(LABEL_MM / 25.4 * dpi_x))
+        draw_h = max(1, round(LABEL_MM / 25.4 * dpi_y))
 
         if draw_w > printable_w or draw_h > printable_h:
             scale = min(printable_w / draw_w, printable_h / draw_h)
             draw_w = max(1, int(draw_w * scale))
             draw_h = max(1, int(draw_h * scale))
 
-        # +X right, +Y down — user mm offsets on top of centered placement.
+        # Top-aligned in the pitch (not vertically centered) + user offsets.
         offset_x = (printable_w - draw_w) // 2 + round(offset_x_mm / 25.4 * dpi_x)
-        offset_y = (printable_h - draw_h) // 2 + round(offset_y_mm / 25.4 * dpi_y)
+        offset_y = round(offset_y_mm / 25.4 * dpi_y)
 
         hdc.StartDoc("SauceStickers")
         try:

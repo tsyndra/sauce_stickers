@@ -151,9 +151,18 @@ class SauceStickersApp(tk.Tk):
             width=6,
             command=self._save_print_offset,
         ).pack(side=tk.LEFT)
-        ttk.Label(offset_row, text="(+X вправо, +Y вниз)").pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
+        ttk.Label(offset_row, text="Зазор").pack(side=tk.LEFT, padx=(10, 2))
+        self.gap_var = tk.DoubleVar(value=config.get_label_gap_mm())
+        ttk.Spinbox(
+            offset_row,
+            from_=0.0,
+            to=10.0,
+            increment=0.5,
+            textvariable=self.gap_var,
+            width=5,
+            command=self._save_label_gap,
+        ).pack(side=tk.LEFT)
+        ttk.Label(offset_row, text="мм").pack(side=tk.LEFT, padx=(2, 0))
         ttk.Button(
             offset_row,
             text="Проверить принтер",
@@ -161,6 +170,7 @@ class SauceStickersApp(tk.Tk):
         ).pack(side=tk.RIGHT)
         self.offset_x_var.trace_add("write", lambda *_: self._save_print_offset())
         self.offset_y_var.trace_add("write", lambda *_: self._save_print_offset())
+        self.gap_var.trace_add("write", lambda *_: self._save_label_gap())
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
@@ -297,11 +307,24 @@ class SauceStickersApp(tk.Tk):
             return
         config.set_print_offset_mm(x, y)
 
+    def _save_label_gap(self) -> None:
+        try:
+            gap = float(self.gap_var.get())
+        except (tk.TclError, ValueError, TypeError):
+            return
+        config.set_label_gap_mm(gap)
+
     def _print_offsets(self) -> tuple[float, float]:
         try:
             return float(self.offset_x_var.get()), float(self.offset_y_var.get())
         except (tk.TclError, ValueError, TypeError):
             return config.get_print_offset_mm()
+
+    def _label_gap(self) -> float:
+        try:
+            return float(self.gap_var.get())
+        except (tk.TclError, ValueError, TypeError):
+            return config.get_label_gap_mm()
 
     def _check_printer_setup(self, *, silent_ok: bool = False) -> bool:
         printer = self.printer_var.get().strip()
@@ -309,7 +332,9 @@ class SauceStickersApp(tk.Tk):
             messagebox.showwarning("Принтер", "Сначала выберите принтер")
             return False
         try:
-            info = printer_service.inspect_printer(printer)
+            info = printer_service.inspect_printer(
+                printer, gap_mm=self._label_gap()
+            )
         except Exception as exc:
             messagebox.showerror("Принтер", str(exc))
             return False
@@ -324,6 +349,7 @@ class SauceStickersApp(tk.Tk):
             "Принтер",
             f"{info['summary']}\n\n"
             "Откройте «Настройки…» и выберите носитель 40×40 мм.\n"
+            "Если наклейки «ползут» вдоль ленты — подкрутите «Зазор».\n"
             "Печатать всё равно?",
         )
 
@@ -488,7 +514,12 @@ class SauceStickersApp(tk.Tk):
             label = label_renderer.render_label(sauce_id)
             ox, oy = self._print_offsets()
             printer_service.print_image(
-                printer, label, copies=qty, offset_x_mm=ox, offset_y_mm=oy
+                printer,
+                label,
+                copies=qty,
+                offset_x_mm=ox,
+                offset_y_mm=oy,
+                gap_mm=self._label_gap(),
             )
             config.set_last_printer(printer)
         except Exception as exc:
@@ -521,7 +552,12 @@ class SauceStickersApp(tk.Tk):
             )
             ox, oy = self._print_offsets()
             printer_service.print_image(
-                printer, label, copies=qty, offset_x_mm=ox, offset_y_mm=oy
+                printer,
+                label,
+                copies=qty,
+                offset_x_mm=ox,
+                offset_y_mm=oy,
+                gap_mm=self._label_gap(),
             )
             config.set_last_printer(printer)
         except Exception as exc:

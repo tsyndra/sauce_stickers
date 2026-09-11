@@ -79,3 +79,19 @@ def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
     config["print_offset_x_mm"] = round(float(x_mm), 2)
     config["print_offset_y_mm"] = round(float(y_mm), 2)
     save_config(config)
+
+
+def get_label_gap_mm() -> float:
+    data = load_config()
+    if "label_gap_mm" not in data:
+        return 3.0
+    try:
+        return max(0.0, float(data.get("label_gap_mm", 3) or 0))
+    except (TypeError, ValueError):
+        return 3.0
+
+
+def set_label_gap_mm(gap_mm: float) -> None:
+    config = load_config()
+    config["label_gap_mm"] = round(max(0.0, float(gap_mm)), 2)
+    save_config(config)
