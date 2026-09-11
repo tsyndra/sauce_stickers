@@ -105,13 +105,13 @@ def _ensure_label_form(hprinter, pitch_mm: float) -> str | None:
         },
     }
     try:
-        win32print.AddForm(hprinter, 1, form)
-    except pywintypes.error:
-        # Name collision with wrong size — try delete+add when allowed.
+        win32print.AddForm(hprinter, form)
+    except Exception:
+        # Name collision with wrong size / no rights — try delete+add, else give up.
         try:
             win32print.DeleteForm(hprinter, name)
-            win32print.AddForm(hprinter, 1, form)
-        except pywintypes.error:
+            win32print.AddForm(hprinter, form)
+        except Exception:
             return _find_label_form_name(hprinter, pitch_mm)
     return _find_label_form_name(hprinter, pitch_mm) or name
 
@@ -157,7 +157,10 @@ def _devmode_for_label(printer_name: str, gap_mm: float = DEFAULT_LABEL_GAP_MM):
             return None
 
         pitch_mm = LABEL_MM + max(0.0, gap_mm)
-        form_name = _ensure_label_form(hprinter, pitch_mm)
+        try:
+            form_name = _ensure_label_form(hprinter, pitch_mm)
+        except Exception:
+            form_name = None
         _apply_label_paper(devmode, form_name, gap_mm)
 
         try:
