@@ -83,12 +83,13 @@ def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
 
 def get_label_gap_mm() -> float:
     data = load_config()
+    default = 3.0
     if "label_gap_mm" not in data:
-        return 3.0
+        return default
     try:
-        return max(0.0, float(data.get("label_gap_mm", 3) or 0))
+        return max(0.0, float(data.get("label_gap_mm", default) or 0))
     except (TypeError, ValueError):
-        return 3.0
+        return default
 
 
 def set_label_gap_mm(gap_mm: float) -> None:

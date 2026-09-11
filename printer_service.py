@@ -11,10 +11,11 @@ from PIL import Image, ImageWin
 
 # Must match label_renderer.LABEL_MM / intended physical size.
 LABEL_MM = 40
-# Physical pitch = label + gap between die-cuts (stops cumulative drift).
+# Typical die-cut gap on 40 mm round rolls (UI «Зазор»); pitch = label + gap.
 DEFAULT_LABEL_GAP_MM = 3.0
 # EnumForms sizes are in thousandths of a millimeter.
 _FORM_TOLERANCE = 1200  # ~1.2 mm
+_FORM_NAME_PREFIX = "SauceStickers"
 
 
 def list_printers() -> list[str]:
@@ -82,6 +83,39 @@ def _find_label_form_name(hprinter, pitch_mm: float) -> str | None:
     return best_name
 
 
+def _ensure_label_form(hprinter, pitch_mm: float) -> str | None:
+    """Create/update a Windows form = 40 mm × (40 + gap) so the spooler feeds pitch."""
+    pitch_mm = max(float(LABEL_MM), float(pitch_mm))
+    existing = _find_label_form_name(hprinter, pitch_mm)
+    if existing:
+        return existing
+
+    target_w = int(LABEL_MM * 1000)
+    target_h = max(1, int(round(pitch_mm * 1000)))
+    name = f"{_FORM_NAME_PREFIX} {LABEL_MM}x{pitch_mm:.1f}".rstrip("0").rstrip(".")
+    form = {
+        "Flags": 0,
+        "Name": name,
+        "Size": {"cx": target_w, "cy": target_h},
+        "ImageableArea": {
+            "left": 0,
+            "top": 0,
+            "right": target_w,
+            "bottom": target_h,
+        },
+    }
+    try:
+        win32print.AddForm(hprinter, 1, form)
+    except pywintypes.error:
+        # Name collision with wrong size — try delete+add when allowed.
+        try:
+            win32print.DeleteForm(hprinter, name)
+            win32print.AddForm(hprinter, 1, form)
+        except pywintypes.error:
+            return _find_label_form_name(hprinter, pitch_mm)
+    return _find_label_form_name(hprinter, pitch_mm) or name
+
+
 def _apply_label_paper(devmode, form_name: str | None, gap_mm: float) -> None:
     """Force label width×pitch (label + gap) on a DEVMODE."""
     pitch_mm = LABEL_MM + max(0.0, gap_mm)
@@ -123,7 +157,7 @@ def _devmode_for_label(printer_name: str, gap_mm: float = DEFAULT_LABEL_GAP_MM):
             return None
 
         pitch_mm = LABEL_MM + max(0.0, gap_mm)
-        form_name = _find_label_form_name(hprinter, pitch_mm)
+        form_name = _ensure_label_form(hprinter, pitch_mm)
         _apply_label_paper(devmode, form_name, gap_mm)
 
         try:
@@ -225,43 +259,46 @@ def print_image(
         raise ValueError("Количество копий должно быть не меньше 1")
 
     gap_mm = max(0.0, float(gap_mm))
-    hdc = _create_printer_dc(printer_name, gap_mm=gap_mm)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
 
-    try:
-        printable_w = hdc.GetDeviceCaps(win32con.HORZRES)
-        printable_h = hdc.GetDeviceCaps(win32con.VERTRES)
-        dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX) or 203
-        dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY) or 203
-
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        win32gui.SetStretchBltMode(hdc.GetHandleOutput(), win32con.COLORONCOLOR)
-
-        # Draw only the 40x40 label area; blank remainder is the inter-label gap.
-        draw_w = max(1, round(LABEL_MM / 25.4 * dpi_x))
-        draw_h = max(1, round(LABEL_MM / 25.4 * dpi_y))
-
-        if draw_w > printable_w or draw_h > printable_h:
-            scale = min(printable_w / draw_w, printable_h / draw_h)
-            draw_w = max(1, int(draw_w * scale))
-            draw_h = max(1, int(draw_h * scale))
-
-        # Top-aligned in the pitch (not vertically centered) + user offsets.
-        offset_x = (printable_w - draw_w) // 2 + round(offset_x_mm / 25.4 * dpi_x)
-        offset_y = round(offset_y_mm / 25.4 * dpi_y)
-
-        hdc.StartDoc("SauceStickers")
+    # One StartDoc per label: Xprinter gap-sensor re-syncs between jobs.
+    # Multi-page inside one job often drifts even when «Зазор» changes.
+    for _ in range(copies):
+        hdc = _create_printer_dc(printer_name, gap_mm=gap_mm)
         try:
-            for _ in range(copies):
+            printable_w = hdc.GetDeviceCaps(win32con.HORZRES)
+            printable_h = hdc.GetDeviceCaps(win32con.VERTRES)
+            dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX) or 203
+            dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY) or 203
+
+            win32gui.SetStretchBltMode(hdc.GetHandleOutput(), win32con.COLORONCOLOR)
+
+            label_w = max(1, round(LABEL_MM / 25.4 * dpi_x))
+            label_h = max(1, round(LABEL_MM / 25.4 * dpi_y))
+
+            draw_w = label_w
+            draw_h = label_h
+            if draw_w > printable_w or draw_h > printable_h:
+                scale = min(printable_w / draw_w, printable_h / draw_h)
+                draw_w = max(1, int(draw_w * scale))
+                draw_h = max(1, int(draw_h * scale))
+
+            # Top-aligned in the page pitch; blank bottom is the inter-label gap
+            # when the Windows form/DEVMODE height is label+gap.
+            offset_x = (printable_w - draw_w) // 2 + round(offset_x_mm / 25.4 * dpi_x)
+            offset_y = round(offset_y_mm / 25.4 * dpi_y)
+
+            hdc.StartDoc("SauceStickers")
+            try:
                 hdc.StartPage()
-                dib = ImageWin.Dib(image)
-                dib.draw(
-                    hdc.GetHandleOutput(),
-                    (offset_x, offset_y, offset_x + draw_w, offset_y + draw_h),
-                )
+                page = Image.new("RGB", (printable_w, printable_h), (255, 255, 255))
+                resized = image.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
+                page.paste(resized, (max(0, offset_x), max(0, offset_y)))
+                dib = ImageWin.Dib(page)
+                dib.draw(hdc.GetHandleOutput(), (0, 0, printable_w, printable_h))
                 hdc.EndPage()
+            finally:
+                hdc.EndDoc()
         finally:
-            hdc.EndDoc()
-    finally:
-        hdc.DeleteDC()
+            hdc.DeleteDC()

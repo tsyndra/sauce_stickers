@@ -158,7 +158,7 @@ class SauceStickersApp(tk.Tk):
             offset_row,
             from_=0.0,
             to=10.0,
-            increment=0.5,
+            increment=0.25,
             textvariable=self.gap_var,
             width=5,
             command=self._save_label_gap,
