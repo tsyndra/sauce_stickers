@@ -83,13 +83,17 @@ def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
 
 def get_label_gap_mm() -> float:
     data = load_config()
-    default = 3.0
+    default = 2.625
     if "label_gap_mm" not in data:
         return default
     try:
-        return max(0.0, float(data.get("label_gap_mm", default) or 0))
+        gap = max(0.0, float(data.get("label_gap_mm", default) or 0))
     except (TypeError, ValueError):
         return default
+    # Old default 3.0 didn't match the physical roll gap.
+    if abs(gap - 3.0) < 0.05:
+        return default
+    return gap
 
 
 def get_tspl_mode() -> bool:
@@ -114,5 +118,5 @@ def get_tspl_direction() -> int:
 
 def set_label_gap_mm(gap_mm: float) -> None:
     config = load_config()
-    config["label_gap_mm"] = round(max(0.0, float(gap_mm)), 2)
+    config["label_gap_mm"] = round(max(0.0, float(gap_mm)), 3)
     save_config(config)
