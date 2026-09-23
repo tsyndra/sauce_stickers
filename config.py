@@ -6,13 +6,13 @@ CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "SauceStickers"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Baked alignment for XP-365B + 40 mm round labels (site photos Sep 2026).
-# X=-1 was already OK horizontally. Y stays 0: content was drifting down, not up.
-# Gap 2.875 is between the 2.75 / 3.0 strips.
-BAKED_OFFSET_X_MM = -1.0
-BAKED_OFFSET_Y_MM = 0.0
-BAKED_LABEL_GAP_MM = 2.875
+# Gap 2.75 → content low (feed long) → 2.5.
+# Same strip: block right+low → X left, Y up (negative).
+BAKED_OFFSET_X_MM = -2.5
+BAKED_OFFSET_Y_MM = -3.5
+BAKED_LABEL_GAP_MM = 2.5
 # Bump to re-apply baked values once on each site after an alignment release.
-ALIGNMENT_REV = 9
+ALIGNMENT_REV = 10
 
 
 def load_config() -> dict:

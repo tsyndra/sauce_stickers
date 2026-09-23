@@ -12,7 +12,7 @@ from PIL import Image, ImageWin
 # Must match label_renderer.LABEL_MM / intended physical size.
 LABEL_MM = 40
 # Typical die-cut gap on 40 mm round rolls (UI «Зазор»); pitch = label + gap.
-DEFAULT_LABEL_GAP_MM = 2.875
+DEFAULT_LABEL_GAP_MM = 2.5
 # EnumForms sizes are in thousandths of a millimeter.
 _FORM_TOLERANCE = 1200  # ~1.2 mm
 _FORM_NAME_PREFIX = "SauceStickers"
