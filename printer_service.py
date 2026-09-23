@@ -12,7 +12,7 @@ from PIL import Image, ImageWin
 # Must match label_renderer.LABEL_MM / intended physical size.
 LABEL_MM = 40
 # Typical die-cut gap on 40 mm round rolls (UI «Зазор»); pitch = label + gap.
-DEFAULT_LABEL_GAP_MM = 2.625
+DEFAULT_LABEL_GAP_MM = 2.875
 # EnumForms sizes are in thousandths of a millimeter.
 _FORM_TOLERANCE = 1200  # ~1.2 mm
 _FORM_NAME_PREFIX = "SauceStickers"
@@ -292,14 +292,15 @@ def print_image_tspl(
         raise ValueError("Принтер не выбран")
 
     gap_mm = max(0.0, float(gap_mm))
-    pitch_mm = LABEL_MM + gap_mm
+    # Pitch in whole dots (203 dpi = 8 dot/mm) — avoids mm rounding underfeed.
+    pitch_dots = LABEL_MM * TSPL_DOTS_PER_MM + max(0, round(gap_mm * TSPL_DOTS_PER_MM))
     width_bytes, height, data = _label_to_tspl_bitmap(
         image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
     )
 
     # One PRINT per label: fixed motor advance of pitch, no sensor hunt.
     head = (
-        f"SIZE {LABEL_MM} mm,{pitch_mm:g} mm\r\n"
+        f"SIZE {LABEL_MM * TSPL_DOTS_PER_MM} dot,{pitch_dots} dot\r\n"
         "GAP 0 mm,0 mm\r\n"
         f"DIRECTION {1 if direction else 0}\r\n"
         "REFERENCE 0,0\r\n"

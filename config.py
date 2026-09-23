@@ -83,15 +83,15 @@ def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
 
 def get_label_gap_mm() -> float:
     data = load_config()
-    default = 2.625
+    default = 2.875
     if "label_gap_mm" not in data:
         return default
     try:
         gap = max(0.0, float(data.get("label_gap_mm", default) or 0))
     except (TypeError, ValueError):
         return default
-    # Old default 3.0 didn't match the physical roll gap.
-    if abs(gap - 3.0) < 0.05:
+    # Old defaults that caused upward drift on XP-365B fixed-pitch TSPL.
+    if abs(gap - 3.0) < 0.05 or abs(gap - 2.625) < 0.02:
         return default
     return gap
 
