@@ -5,6 +5,15 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "SauceStickers"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+# Baked alignment for XP-365B + 40 mm round labels (site photos Sep 2026).
+# X=-1 was already OK horizontally; Y=3.5 drops content off the top edge.
+# Gap 2.875 is between the 2.75 / 3.0 strips that still drifted.
+BAKED_OFFSET_X_MM = -1.0
+BAKED_OFFSET_Y_MM = 3.5
+BAKED_LABEL_GAP_MM = 2.875
+# Bump to re-apply baked values once on each site after an alignment release.
+ALIGNMENT_REV = 8
+
 
 def load_config() -> dict:
     if not CONFIG_FILE.exists():
@@ -20,6 +29,20 @@ def save_config(config: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with CONFIG_FILE.open("w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
+
+
+def ensure_alignment_defaults() -> None:
+    """Force gap/X/Y from this release once (overwrites old site fiddling)."""
+    config = load_config()
+    if int(config.get("alignment_rev", 0) or 0) >= ALIGNMENT_REV:
+        return
+    config["print_offset_x_mm"] = BAKED_OFFSET_X_MM
+    config["print_offset_y_mm"] = BAKED_OFFSET_Y_MM
+    config["label_gap_mm"] = BAKED_LABEL_GAP_MM
+    config["sensor_from_left_mm"] = 0.0
+    config["tspl_mode"] = True
+    config["alignment_rev"] = ALIGNMENT_REV
+    save_config(config)
 
 
 def get_last_printer() -> str | None:
@@ -59,21 +82,16 @@ def set_update_base(update_base: str) -> None:
 
 
 def get_print_offset_mm() -> tuple[float, float]:
+    ensure_alignment_defaults()
     data = load_config()
-    # Photo (unagi strip): content high+left with X=-1,Y=0 → need right and down.
-    if "print_offset_x_mm" not in data and "print_offset_y_mm" not in data:
-        return 0.0, 3.5
     try:
-        x = float(data.get("print_offset_x_mm", 0) or 0)
+        x = float(data.get("print_offset_x_mm", BAKED_OFFSET_X_MM) or 0)
     except (TypeError, ValueError):
-        x = 0.0
+        x = BAKED_OFFSET_X_MM
     try:
-        y = float(data.get("print_offset_y_mm", 0) or 0)
+        y = float(data.get("print_offset_y_mm", BAKED_OFFSET_Y_MM) or 0)
     except (TypeError, ValueError):
-        y = 0.0
-    # Nudge the stuck site defaults that print into the top edge.
-    if abs(x - (-1.0)) < 0.05 and abs(y) < 0.05:
-        return 0.0, 3.5
+        y = BAKED_OFFSET_Y_MM
     return x, y
 
 
@@ -85,14 +103,12 @@ def set_print_offset_mm(x_mm: float, y_mm: float = 0.0) -> None:
 
 
 def get_label_gap_mm() -> float:
+    ensure_alignment_defaults()
     data = load_config()
-    default = 2.875
-    if "label_gap_mm" not in data:
-        return default
     try:
-        return max(0.0, float(data.get("label_gap_mm", default) or 0))
+        return max(0.0, float(data.get("label_gap_mm", BAKED_LABEL_GAP_MM) or 0))
     except (TypeError, ValueError):
-        return default
+        return BAKED_LABEL_GAP_MM
 
 
 def get_tspl_mode() -> bool:
@@ -122,14 +138,7 @@ def set_label_gap_mm(gap_mm: float) -> None:
 
 
 def get_sensor_from_left_mm() -> float:
-    """Printer/paper left edge → gap sensor. 0 = continuous FEED/SIZE (recommended)."""
-    data = load_config()
-    if "sensor_from_left_mm" not in data:
-        return 0.0
-    try:
-        return max(0.0, float(data.get("sensor_from_left_mm", 0) or 0))
-    except (TypeError, ValueError):
-        return 0.0
+    return 0.0
 
 
 def set_sensor_from_left_mm(mm: float) -> None:
