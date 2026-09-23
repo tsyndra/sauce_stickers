@@ -60,9 +60,9 @@ def set_update_base(update_base: str) -> None:
 
 def get_print_offset_mm() -> tuple[float, float]:
     data = load_config()
-    # Photo: content shifted left + up → +X right, +Y down.
+    # Photo (unagi strip): content high+left with X=-1,Y=0 → need right and down.
     if "print_offset_x_mm" not in data and "print_offset_y_mm" not in data:
-        return 2.0, 2.5
+        return 0.0, 3.5
     try:
         x = float(data.get("print_offset_x_mm", 0) or 0)
     except (TypeError, ValueError):
@@ -71,6 +71,9 @@ def get_print_offset_mm() -> tuple[float, float]:
         y = float(data.get("print_offset_y_mm", 0) or 0)
     except (TypeError, ValueError):
         y = 0.0
+    # Nudge the stuck site defaults that print into the top edge.
+    if abs(x - (-1.0)) < 0.05 and abs(y) < 0.05:
+        return 0.0, 3.5
     return x, y
 
 
@@ -119,14 +122,14 @@ def set_label_gap_mm(gap_mm: float) -> None:
 
 
 def get_sensor_from_left_mm() -> float:
-    """Printer/paper left edge → left edge of gap sensor (0 = FEED mode, no sensor)."""
+    """Printer/paper left edge → gap sensor. 0 = continuous FEED/SIZE (recommended)."""
     data = load_config()
     if "sensor_from_left_mm" not in data:
-        return 10.0
+        return 0.0
     try:
-        return max(0.0, float(data.get("sensor_from_left_mm", 10) or 0))
+        return max(0.0, float(data.get("sensor_from_left_mm", 0) or 0))
     except (TypeError, ValueError):
-        return 10.0
+        return 0.0
 
 
 def set_sensor_from_left_mm(mm: float) -> None:

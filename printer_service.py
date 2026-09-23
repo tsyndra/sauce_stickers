@@ -316,14 +316,12 @@ def print_image_tspl(
     sensor_from_left_mm: float = 0.0,
     label_margin_left_mm: float = DEFAULT_LABEL_MARGIN_LEFT_MM,
 ) -> None:
-    """Send raw TSPL for XP-365B.
+    """Send raw TSPL for XP-365B — continuous fixed pitch (no gap sensor).
 
-    sensor_from_left_mm > 0:
-      Round-label geometry for the side gap sensor — SIZE/GAP match what the
-      sensor sees (chord + wide gap), bitmap shifted by «lead» so registration
-      matches the physical circle.
-    sensor_from_left_mm == 0:
-      Continuous FEED of the physical gap after each 40×40 PRINT (no sensor).
+    Page height = 40 + gap. Bitmap is the 40 mm label at the top; blank bottom
+    is the inter-label advance. Sensor geometry mode is opt-in only
+    (sensor_from_left_mm > 0); default is 0 because the side sensor + round
+    labels made registration worse on site.
     """
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
@@ -332,53 +330,14 @@ def print_image_tspl(
 
     gap_mm = max(0.0, float(gap_mm))
     sensor_from_left_mm = max(0.0, float(sensor_from_left_mm))
-
-    if sensor_from_left_mm > 0.05:
-        geo = round_sensor_geometry(
-            gap_mm=gap_mm,
-            sensor_from_left_mm=sensor_from_left_mm,
-            label_margin_left_mm=label_margin_left_mm,
-        )
-        # Sensor sees the leading edge «lead» late → shift artwork up (−Y if +Y down).
-        width_bytes, height, data = _label_to_tspl_bitmap(
-            image,
-            offset_x_mm=offset_x_mm,
-            offset_y_mm=offset_y_mm - geo["lead_mm"],
-        )
-        bitmap_y = -round(geo["lead_mm"] * TSPL_DOTS_PER_MM)
-        setup = (
-            f"SIZE {LABEL_MM} mm,{geo['chord_mm']:.3f} mm\r\n"
-            f"GAP {geo['gap_sensor_mm']:.3f} mm,0 mm\r\n"
-            f"DIRECTION {1 if direction else 0}\r\n"
-            "REFERENCE 0,0\r\n"
-            "OFFSET 0 mm\r\n"
-            "SET TEAR ON\r\n"
-        ).encode("ascii")
-        chunks: list[bytes] = [setup]
-        for _ in range(copies):
-            chunks.append(b"CLS\r\n")
-            chunks.append(
-                f"BITMAP 0,{bitmap_y},{width_bytes},{height},0,".encode("ascii")
-            )
-            chunks.append(data)
-            chunks.append(b"\r\nPRINT 1,1\r\n")
-        _send_raw(
-            printer_name,
-            b"".join(chunks),
-            doc_name=(
-                f"SauceStickers sensor={sensor_from_left_mm:g} "
-                f"chord={geo['chord_mm']:.2f} gapS={geo['gap_sensor_mm']:.2f}"
-            ),
-        )
-        return
-
-    gap_dots = max(0, round(gap_mm * TSPL_DOTS_PER_MM))
+    pitch_mm = LABEL_MM + gap_mm
     width_bytes, height, data = _label_to_tspl_bitmap(
         image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
     )
 
+    # Force continuous media so leftover gap-sensor calibration cannot hunt.
     setup = (
-        f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
+        f"SIZE {LABEL_MM} mm,{pitch_mm:.3f} mm\r\n"
         "GAP 0 mm,0 mm\r\n"
         f"DIRECTION {1 if direction else 0}\r\n"
         "REFERENCE 0,0\r\n"
@@ -386,20 +345,21 @@ def print_image_tspl(
         "SET TEAR ON\r\n"
     ).encode("ascii")
 
-    chunks = [setup]
+    chunks: list[bytes] = [setup]
     for _ in range(copies):
         chunks.append(b"CLS\r\n")
         chunks.append(f"BITMAP 0,0,{width_bytes},{height},0,".encode("ascii"))
         chunks.append(data)
         chunks.append(b"\r\nPRINT 1,1\r\n")
-        if gap_dots > 0:
-            chunks.append(f"FEED {gap_dots}\r\n".encode("ascii"))
 
     _send_raw(
         printer_name,
         b"".join(chunks),
-        doc_name=f"SauceStickers gap={gap_mm:g}mm feed={gap_dots}dot",
+        doc_name=f"SauceStickers pitch={pitch_mm:.3f}mm",
     )
+    # sensor_from_left kept in signature for UI/config compatibility; unused.
+    _ = (sensor_from_left_mm, label_margin_left_mm)
+
 
 
 def _send_raw(printer_name: str, payload: bytes, doc_name: str = "SauceStickers") -> None:

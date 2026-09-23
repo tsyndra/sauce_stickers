@@ -164,18 +164,6 @@ class SauceStickersApp(tk.Tk):
             command=self._save_label_gap,
         ).pack(side=tk.LEFT)
         ttk.Label(offset_row, text="мм").pack(side=tk.LEFT, padx=(2, 0))
-        ttk.Label(offset_row, text="Датчик от края").pack(side=tk.LEFT, padx=(10, 2))
-        self.sensor_left_var = tk.DoubleVar(value=config.get_sensor_from_left_mm())
-        ttk.Spinbox(
-            offset_row,
-            from_=0.0,
-            to=25.0,
-            increment=0.5,
-            textvariable=self.sensor_left_var,
-            width=5,
-            command=self._save_sensor_left,
-        ).pack(side=tk.LEFT)
-        ttk.Label(offset_row, text="мм").pack(side=tk.LEFT, padx=(2, 0))
         self.tspl_var = tk.BooleanVar(value=config.get_tspl_mode())
         ttk.Checkbutton(
             offset_row,
@@ -196,7 +184,6 @@ class SauceStickersApp(tk.Tk):
         self.offset_x_var.trace_add("write", lambda *_: self._save_print_offset())
         self.offset_y_var.trace_add("write", lambda *_: self._save_print_offset())
         self.gap_var.trace_add("write", lambda *_: self._save_label_gap())
-        self.sensor_left_var.trace_add("write", lambda *_: self._save_sensor_left())
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
@@ -340,13 +327,6 @@ class SauceStickersApp(tk.Tk):
             return
         config.set_label_gap_mm(gap)
 
-    def _save_sensor_left(self) -> None:
-        try:
-            mm = float(self.sensor_left_var.get())
-        except (tk.TclError, ValueError, TypeError):
-            return
-        config.set_sensor_from_left_mm(mm)
-
     def _print_offsets(self) -> tuple[float, float]:
         try:
             return float(self.offset_x_var.get()), float(self.offset_y_var.get())
@@ -359,12 +339,6 @@ class SauceStickersApp(tk.Tk):
         except (tk.TclError, ValueError, TypeError):
             return config.get_label_gap_mm()
 
-    def _sensor_from_left(self) -> float:
-        try:
-            return float(self.sensor_left_var.get())
-        except (tk.TclError, ValueError, TypeError):
-            return config.get_sensor_from_left_mm()
-
     def _print_label(self, printer: str, label, qty: int) -> None:
         ox, oy = self._print_offsets()
         if bool(self.tspl_var.get()):
@@ -376,7 +350,7 @@ class SauceStickersApp(tk.Tk):
                 offset_y_mm=oy,
                 gap_mm=self._label_gap(),
                 direction=config.get_tspl_direction(),
-                sensor_from_left_mm=self._sensor_from_left(),
+                sensor_from_left_mm=0.0,
             )
         else:
             printer_service.print_image(
@@ -413,22 +387,11 @@ class SauceStickersApp(tk.Tk):
             return False
         if bool(self.tspl_var.get()):
             gap = self._label_gap()
-            sensor = self._sensor_from_left()
-            if sensor > 0.05:
-                geo = printer_service.round_sensor_geometry(
-                    gap_mm=gap, sensor_from_left_mm=sensor
-                )
-                summary = (
-                    f"TSPL + датчик сбоку: от края {sensor:g} мм → "
-                    f"хорда {geo['chord_mm']:.1f}, зазор датчика {geo['gap_sensor_mm']:.1f}, "
-                    f"сдвиг вверх {geo['lead_mm']:.1f} мм"
-                )
-            else:
-                feed_dots = max(0, round(gap * 8))
-                summary = (
-                    f"TSPL: печать 40×40, затем FEED {feed_dots} точек "
-                    f"(зазор {gap:g} мм) — датчик выкл (0)"
-                )
+            summary = (
+                f"TSPL непрерывно: шаг {40 + gap:.3f} мм "
+                f"(40 + зазор {gap:g}), датчик выкл. "
+                f"Сдвиг X/Y двигает картинку по наклейке"
+            )
             self.status_var.set(summary)
             if not silent_ok:
                 messagebox.showinfo("Принтер", summary)
