@@ -18,6 +18,41 @@ _FORM_TOLERANCE = 1200  # ~1.2 mm
 _FORM_NAME_PREFIX = "SauceStickers"
 # XP-365B: 203 dpi ≈ 8 dots/mm (TSPL coordinates are in dots).
 TSPL_DOTS_PER_MM = 8
+# Round label on ~50 mm liner: ~5 mm side margins → center at 25 mm from paper left.
+DEFAULT_LABEL_MARGIN_LEFT_MM = 5.0
+# Left edge of printer media path → left edge of gap sensor window (~1 cm on site).
+DEFAULT_SENSOR_FROM_LEFT_MM = 10.0
+
+
+def round_sensor_geometry(
+    *,
+    gap_mm: float,
+    sensor_from_left_mm: float,
+    label_margin_left_mm: float = DEFAULT_LABEL_MARGIN_LEFT_MM,
+) -> dict[str, float]:
+    """What the side-mounted gap sensor sees on a round 40 mm label.
+
+    sensor_from_left_mm: paper/printer left edge → left edge of the sensor window.
+    Returns chord (label length under sensor), gap_sensor, and lead (how late the
+    sensor sees the leading edge vs the geometric top of the circle).
+    """
+    radius = LABEL_MM / 2.0
+    center_from_left = float(label_margin_left_mm) + radius
+    lateral = abs(center_from_left - float(sensor_from_left_mm))
+    # Sensor must stay inside the circle; clamp to keep geometry real.
+    lateral = min(lateral, radius - 0.5)
+    half_chord = (radius * radius - lateral * lateral) ** 0.5
+    chord = 2.0 * half_chord
+    pitch = LABEL_MM + max(0.0, float(gap_mm))
+    gap_sensor = max(0.5, pitch - chord)
+    lead = radius - half_chord
+    return {
+        "lateral_mm": lateral,
+        "chord_mm": chord,
+        "gap_sensor_mm": gap_sensor,
+        "lead_mm": lead,
+        "pitch_mm": pitch,
+    }
 
 
 def list_printers() -> list[str]:
@@ -278,12 +313,17 @@ def print_image_tspl(
     offset_y_mm: float = 0.0,
     gap_mm: float = DEFAULT_LABEL_GAP_MM,
     direction: int = 1,
+    sensor_from_left_mm: float = 0.0,
+    label_margin_left_mm: float = DEFAULT_LABEL_MARGIN_LEFT_MM,
 ) -> None:
-    """Send raw TSPL: print 40×40 label, then FEED the inter-label gap.
+    """Send raw TSPL for XP-365B.
 
-    XP-365B often ignores SIZE height / GAP (sensor sits off-center for round
-    labels). «Зазор» therefore drives an explicit FEED in dots after each PRINT,
-    so changing the spinbox always changes motor advance.
+    sensor_from_left_mm > 0:
+      Round-label geometry for the side gap sensor — SIZE/GAP match what the
+      sensor sees (chord + wide gap), bitmap shifted by «lead» so registration
+      matches the physical circle.
+    sensor_from_left_mm == 0:
+      Continuous FEED of the physical gap after each 40×40 PRINT (no sensor).
     """
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
@@ -291,12 +331,52 @@ def print_image_tspl(
         raise ValueError("Принтер не выбран")
 
     gap_mm = max(0.0, float(gap_mm))
+    sensor_from_left_mm = max(0.0, float(sensor_from_left_mm))
+
+    if sensor_from_left_mm > 0.05:
+        geo = round_sensor_geometry(
+            gap_mm=gap_mm,
+            sensor_from_left_mm=sensor_from_left_mm,
+            label_margin_left_mm=label_margin_left_mm,
+        )
+        # Sensor sees the leading edge «lead» late → shift artwork up (−Y if +Y down).
+        width_bytes, height, data = _label_to_tspl_bitmap(
+            image,
+            offset_x_mm=offset_x_mm,
+            offset_y_mm=offset_y_mm - geo["lead_mm"],
+        )
+        bitmap_y = -round(geo["lead_mm"] * TSPL_DOTS_PER_MM)
+        setup = (
+            f"SIZE {LABEL_MM} mm,{geo['chord_mm']:.3f} mm\r\n"
+            f"GAP {geo['gap_sensor_mm']:.3f} mm,0 mm\r\n"
+            f"DIRECTION {1 if direction else 0}\r\n"
+            "REFERENCE 0,0\r\n"
+            "OFFSET 0 mm\r\n"
+            "SET TEAR ON\r\n"
+        ).encode("ascii")
+        chunks: list[bytes] = [setup]
+        for _ in range(copies):
+            chunks.append(b"CLS\r\n")
+            chunks.append(
+                f"BITMAP 0,{bitmap_y},{width_bytes},{height},0,".encode("ascii")
+            )
+            chunks.append(data)
+            chunks.append(b"\r\nPRINT 1,1\r\n")
+        _send_raw(
+            printer_name,
+            b"".join(chunks),
+            doc_name=(
+                f"SauceStickers sensor={sensor_from_left_mm:g} "
+                f"chord={geo['chord_mm']:.2f} gapS={geo['gap_sensor_mm']:.2f}"
+            ),
+        )
+        return
+
     gap_dots = max(0, round(gap_mm * TSPL_DOTS_PER_MM))
     width_bytes, height, data = _label_to_tspl_bitmap(
         image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
     )
 
-    # Continuous media: fixed 40×40 print area + FEED for the physical gap.
     setup = (
         f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
         "GAP 0 mm,0 mm\r\n"
@@ -306,14 +386,13 @@ def print_image_tspl(
         "SET TEAR ON\r\n"
     ).encode("ascii")
 
-    chunks: list[bytes] = [setup]
+    chunks = [setup]
     for _ in range(copies):
         chunks.append(b"CLS\r\n")
         chunks.append(f"BITMAP 0,0,{width_bytes},{height},0,".encode("ascii"))
         chunks.append(data)
         chunks.append(b"\r\nPRINT 1,1\r\n")
         if gap_dots > 0:
-            # FEED n — advance n dots without printing (TSPL; n is dots).
             chunks.append(f"FEED {gap_dots}\r\n".encode("ascii"))
 
     _send_raw(

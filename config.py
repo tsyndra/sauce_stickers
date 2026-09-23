@@ -116,3 +116,20 @@ def set_label_gap_mm(gap_mm: float) -> None:
     config = load_config()
     config["label_gap_mm"] = round(max(0.0, float(gap_mm)), 3)
     save_config(config)
+
+
+def get_sensor_from_left_mm() -> float:
+    """Printer/paper left edge → left edge of gap sensor (0 = FEED mode, no sensor)."""
+    data = load_config()
+    if "sensor_from_left_mm" not in data:
+        return 10.0
+    try:
+        return max(0.0, float(data.get("sensor_from_left_mm", 10) or 0))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def set_sensor_from_left_mm(mm: float) -> None:
+    config = load_config()
+    config["sensor_from_left_mm"] = round(max(0.0, float(mm)), 2)
+    save_config(config)
