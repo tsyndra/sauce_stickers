@@ -279,20 +279,28 @@ def print_image_tspl(
     gap_mm: float = DEFAULT_LABEL_GAP_MM,
     direction: int = 1,
 ) -> None:
-    """Send raw TSPL (XP-365B native) so the printer syncs on the die-cut gap itself."""
+    """Send raw TSPL with fixed pitch (label + gap).
+
+    XP-365B often fails gap sensing on yellow-liner round labels, so we do NOT
+    rely on GAP/sensor. Page height = 40 + gap mm, GAP 0 (continuous). The
+    bitmap is only the 40 mm label at the top; blank bottom is the inter-label
+    advance. Field «Зазор» = physical gap between die-cuts.
+    """
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
     if not printer_name.strip():
         raise ValueError("Принтер не выбран")
 
     gap_mm = max(0.0, float(gap_mm))
+    pitch_mm = LABEL_MM + gap_mm
     width_bytes, height, data = _label_to_tspl_bitmap(
         image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
     )
 
+    # One PRINT per label: fixed motor advance of pitch, no sensor hunt.
     head = (
-        f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
-        f"GAP {gap_mm:g} mm,0 mm\r\n"
+        f"SIZE {LABEL_MM} mm,{pitch_mm:g} mm\r\n"
+        "GAP 0 mm,0 mm\r\n"
         f"DIRECTION {1 if direction else 0}\r\n"
         "REFERENCE 0,0\r\n"
         "OFFSET 0 mm\r\n"
@@ -300,8 +308,9 @@ def print_image_tspl(
         "CLS\r\n"
         f"BITMAP 0,0,{width_bytes},{height},0,"
     ).encode("ascii")
-    tail = f"\r\nPRINT 1,{int(copies)}\r\n".encode("ascii")
-    _send_raw(printer_name, head + data + tail)
+    body = data + b"\r\nPRINT 1,1\r\n"
+    payload = b"".join(head + body for _ in range(copies))
+    _send_raw(printer_name, payload)
 
 
 def _send_raw(printer_name: str, payload: bytes, doc_name: str = "SauceStickers") -> None:

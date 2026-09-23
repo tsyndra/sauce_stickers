@@ -385,9 +385,10 @@ class SauceStickersApp(tk.Tk):
             messagebox.showwarning("Принтер", "Сначала выберите принтер")
             return False
         if bool(self.tspl_var.get()):
+            gap = self._label_gap()
             summary = (
-                f"Прямая печать TSPL: SIZE 40×40 мм, GAP {self._label_gap():g} мм — "
-                "шаг ловит сам принтер по датчику зазора"
+                f"Прямая печать TSPL: шаг {40 + gap:g} мм "
+                f"(наклейка 40 + зазор {gap:g}), без датчика — непрерывная лента"
             )
             self.status_var.set(summary)
             if not silent_ok:
