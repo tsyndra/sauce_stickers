@@ -386,9 +386,10 @@ class SauceStickersApp(tk.Tk):
             return False
         if bool(self.tspl_var.get()):
             gap = self._label_gap()
+            feed_dots = max(0, round(gap * 8))
             summary = (
-                f"Прямая печать TSPL: шаг {40 + gap:g} мм "
-                f"(наклейка 40 + зазор {gap:g}), без датчика — непрерывная лента"
+                f"TSPL: печать 40×40, затем FEED {feed_dots} точек "
+                f"(зазор {gap:g} мм) — датчик не используется"
             )
             self.status_var.set(summary)
             if not silent_ok:

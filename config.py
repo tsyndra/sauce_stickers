@@ -87,13 +87,9 @@ def get_label_gap_mm() -> float:
     if "label_gap_mm" not in data:
         return default
     try:
-        gap = max(0.0, float(data.get("label_gap_mm", default) or 0))
+        return max(0.0, float(data.get("label_gap_mm", default) or 0))
     except (TypeError, ValueError):
         return default
-    # Old defaults that caused upward drift on XP-365B fixed-pitch TSPL.
-    if abs(gap - 3.0) < 0.05 or abs(gap - 2.625) < 0.02:
-        return default
-    return gap
 
 
 def get_tspl_mode() -> bool:

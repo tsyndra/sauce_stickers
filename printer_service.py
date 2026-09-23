@@ -279,12 +279,11 @@ def print_image_tspl(
     gap_mm: float = DEFAULT_LABEL_GAP_MM,
     direction: int = 1,
 ) -> None:
-    """Send raw TSPL with fixed pitch (label + gap).
+    """Send raw TSPL: print 40×40 label, then FEED the inter-label gap.
 
-    XP-365B often fails gap sensing on yellow-liner round labels, so we do NOT
-    rely on GAP/sensor. Page height = 40 + gap mm, GAP 0 (continuous). The
-    bitmap is only the 40 mm label at the top; blank bottom is the inter-label
-    advance. Field «Зазор» = physical gap between die-cuts.
+    XP-365B often ignores SIZE height / GAP (sensor sits off-center for round
+    labels). «Зазор» therefore drives an explicit FEED in dots after each PRINT,
+    so changing the spinbox always changes motor advance.
     """
     if copies < 1:
         raise ValueError("Количество копий должно быть не меньше 1")
@@ -292,26 +291,36 @@ def print_image_tspl(
         raise ValueError("Принтер не выбран")
 
     gap_mm = max(0.0, float(gap_mm))
-    # Pitch in whole dots (203 dpi = 8 dot/mm) — avoids mm rounding underfeed.
-    pitch_dots = LABEL_MM * TSPL_DOTS_PER_MM + max(0, round(gap_mm * TSPL_DOTS_PER_MM))
+    gap_dots = max(0, round(gap_mm * TSPL_DOTS_PER_MM))
     width_bytes, height, data = _label_to_tspl_bitmap(
         image, offset_x_mm=offset_x_mm, offset_y_mm=offset_y_mm
     )
 
-    # One PRINT per label: fixed motor advance of pitch, no sensor hunt.
-    head = (
-        f"SIZE {LABEL_MM * TSPL_DOTS_PER_MM} dot,{pitch_dots} dot\r\n"
+    # Continuous media: fixed 40×40 print area + FEED for the physical gap.
+    setup = (
+        f"SIZE {LABEL_MM} mm,{LABEL_MM} mm\r\n"
         "GAP 0 mm,0 mm\r\n"
         f"DIRECTION {1 if direction else 0}\r\n"
         "REFERENCE 0,0\r\n"
         "OFFSET 0 mm\r\n"
         "SET TEAR ON\r\n"
-        "CLS\r\n"
-        f"BITMAP 0,0,{width_bytes},{height},0,"
     ).encode("ascii")
-    body = data + b"\r\nPRINT 1,1\r\n"
-    payload = b"".join(head + body for _ in range(copies))
-    _send_raw(printer_name, payload)
+
+    chunks: list[bytes] = [setup]
+    for _ in range(copies):
+        chunks.append(b"CLS\r\n")
+        chunks.append(f"BITMAP 0,0,{width_bytes},{height},0,".encode("ascii"))
+        chunks.append(data)
+        chunks.append(b"\r\nPRINT 1,1\r\n")
+        if gap_dots > 0:
+            # FEED n — advance n dots without printing (TSPL; n is dots).
+            chunks.append(f"FEED {gap_dots}\r\n".encode("ascii"))
+
+    _send_raw(
+        printer_name,
+        b"".join(chunks),
+        doc_name=f"SauceStickers gap={gap_mm:g}mm feed={gap_dots}dot",
+    )
 
 
 def _send_raw(printer_name: str, payload: bytes, doc_name: str = "SauceStickers") -> None:
