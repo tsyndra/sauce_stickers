@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Bump this on every release (must match dist/version.json after build.bat).
-APP_VERSION = "1.4.10"
+APP_VERSION = "1.4.11"
 
 # GitHub Releases assets: version.json + SauceStickers.exe
 # https://github.com/tsyndra/sauce_stickers/releases/latest/download/...

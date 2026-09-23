@@ -129,7 +129,7 @@ class SauceStickersApp(tk.Tk):
         offset_row = ttk.Frame(self, padding=(8, 6, 8, 0))
         offset_row.pack(fill=tk.X)
         ttk.Label(offset_row, text="Сдвиг мм:").pack(side=tk.LEFT)
-        ttk.Label(offset_row, text="X").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(offset_row, text="X→").pack(side=tk.LEFT, padx=(8, 2))
         ox, oy = config.get_print_offset_mm()
         self.offset_x_var = tk.DoubleVar(value=ox)
         self.offset_y_var = tk.DoubleVar(value=oy)
@@ -142,7 +142,7 @@ class SauceStickersApp(tk.Tk):
             width=6,
             command=self._save_print_offset,
         ).pack(side=tk.LEFT)
-        ttk.Label(offset_row, text="Y").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(offset_row, text="Y↓").pack(side=tk.LEFT, padx=(8, 2))
         ttk.Spinbox(
             offset_row,
             from_=-10.0,
